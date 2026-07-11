@@ -720,4 +720,57 @@ router.get('/payments/:id/image', ...requireRole('CREW', 'ADMIN'), async (req, r
   }
 });
 
+// ── DELETE /orders/:id ────────────────────────────────────────────────
+// Admin only: deletes an order and notifies user/crew
+router.delete('/:id', ...requireRole('ADMIN'), async (req, res) => {
+  const { id } = req.params;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Get order details first (user_id and assigned_crew_id)
+    const { rows } = await client.query(
+      `SELECT user_id, assigned_crew_id FROM orders WHERE id = $1`,
+      [id]
+    );
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const order = rows[0];
+
+    // Notify user if exists
+    if (order.user_id) {
+      await client.query(
+        `INSERT INTO notifications (user_id, message) VALUES ($1, $2)`,
+        [order.user_id, `Order ${id} has been cancelled by the administrator.`]
+      );
+    }
+
+    // Notify assigned crew if exists
+    if (order.assigned_crew_id) {
+      await client.query(
+        `INSERT INTO notifications (crew_id, message) VALUES ($1, $2)`,
+        [order.assigned_crew_id, `Assigned order ${id} has been cancelled by the administrator.`]
+      );
+    }
+
+    // Delete audit logs associated with this order
+    await client.query(`DELETE FROM audit_logs WHERE order_id = $1`, [id]);
+
+    // Delete the order itself (cascades to order_items, payment_screenshots)
+    await client.query(`DELETE FROM orders WHERE id = $1`, [id]);
+
+    await client.query('COMMIT');
+    res.json({ message: 'Order deleted successfully' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[DELETE /orders/:id]', err);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  } finally {
+    client.release();
+  }
+});
+
 module.exports = router;
