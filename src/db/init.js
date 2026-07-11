@@ -144,6 +144,30 @@ async function initDb() {
     await pool.query(SQL);
     await pool.query(MIGRATIONS);
     console.log('Database tables ready');
+
+    // Seed admin if environment variables are set
+    const adminEmail = process.env.SEED_ADMIN_EMAIL;
+    const adminPassword = process.env.SEED_ADMIN_PASSWORD;
+    const adminFirst = process.env.SEED_ADMIN_FIRST || 'Admin';
+    const adminLast = process.env.SEED_ADMIN_LAST || '';
+    const adminPhone = process.env.SEED_ADMIN_PHONE || '';
+
+    if (adminEmail && adminPassword) {
+      const emailNormalized = adminEmail.toLowerCase().trim();
+      const { rows } = await pool.query('SELECT id FROM users WHERE email = $1', [emailNormalized]);
+      if (!rows.length) {
+        const bcrypt = require('bcryptjs');
+        const hash = await bcrypt.hash(adminPassword, 10);
+        await pool.query(
+          `INSERT INTO users (first_name, last_name, email, password, role, phone)
+           VALUES ($1, $2, $3, $4, 'ADMIN', $5)`,
+          [adminFirst, adminLast, emailNormalized, hash, adminPhone]
+        );
+        console.log(`Admin user seeded successfully: ${emailNormalized}`);
+      } else {
+        console.log(`Admin user already exists: ${emailNormalized}`);
+      }
+    }
   } catch (err) {
     console.error('Database init failed:', err.message);
     process.exit(1);
